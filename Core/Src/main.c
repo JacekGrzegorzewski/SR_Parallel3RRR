@@ -61,11 +61,7 @@ DMA_HandleTypeDef hdma_usart2_rx;
 
 /* USER CODE BEGIN PV */
 
-volatile unsigned int i = 0;
-
-unsigned long kurwa[6400];
-
-unsigned long data[6400];
+int i = 0;
 
 
 motorInfo test;
@@ -98,30 +94,45 @@ int _write( int file,unsigned char *ptr, int len)
 
 
 
+//jednostki sie nie zgadzaja w rownaniu roznicowym
+//acc_lim ma jednostke czasu, a powinien jednoski wgle nie miec
+//jak naprawic bog jeden wie
 
+//dobra walic, i tak liczy dynamicznie to jak dojdzie do maksa to policzy decel
 void reset_motor(motorInfo *motor, long total_steps, unsigned accel, unsigned decel, unsigned max )
 {
 
 	HAL_TIM_OC_Stop(&htim2,TIM_CHANNEL_1);
 
+	max = max <= MIN_VEL? MIN_VEL:max;
 	motor->max_speed = (max >= MAX_VEL) ? MAX_VEL : max;
 	motor->dir = total_steps>0 ? 1 : -1;
 	motor->total_steps=total_steps>0?total_steps:-total_steps;
-	motor->starting_frequency=0;
 	motor->auto_reload=52500;// length of current pulse in timer ticks
+	motor->rest=0;
+motor->state=ACCEL;
 
-		motor->step_position=0;
+	if(accel>1000)//przyspieszenie ogranczone do 1rad/s^2
+		accel=1000;
+	if(accel == 0)
+		accel=1;
 
-	motor->acc_lim = 1+(motor->max_speed-MIN_VEL)/accel;
-	motor->peak_velocity=(accel+motor->total_steps*decel)/(accel+decel);
-	motor->decel_start=motor->total_steps-(motor->max_speed-MIN_VEL)/decel;
+	if(decel>5000)//przyspieszenie ogranczone do 1rad/s^2
+			decel=5000;
+		if(decel == 0)
+			decel=1;
 
+	motor->step_position=0;
+
+
+
+	motor->peak_velocity=(motor->total_steps*decel)/(accel+decel);
 
 	motor->acceleration=accel;
 
 	motor->deceleration=decel;
 
-	motor->max_speed_ARR = CLK_FRQ*ALPHA*100/motor->max_speed;
+	motor->max_speed_ARR = CLK_FRQ*ALPHA*1000/motor->max_speed;
 
 	motor->steps=0;
 
@@ -132,69 +143,119 @@ void reset_motor(motorInfo *motor, long total_steps, unsigned accel, unsigned de
 
 
 
-//tu sa jednostki zjebane kurwa 2 dni meczenstwa ja pierdole kurwa mac
+
+//problem wynika z duego bledu dzielenia staloprzecinkowego
+//trzeba dodac poprawke i ewentualna blokade predkosci
+/*
 unsigned long calculate_auto_reload(motorInfo *motor)
 {
+
+	unsigned tmp=0;
 	if(motor->steps < motor->total_steps)
 	{
 		motor->step_position+=motor->dir;
 	}
 	else
 	{
-		//HAL_TIM_OC_Stop(&htim2,TIM_CHANNEL_1);
-		//flag_htim2_done=1;
+		HAL_TIM_OC_Stop(&htim2,TIM_CHANNEL_1);
+		flag_htim2_done=1;
 
 		return 52500;
 	}
 
-	if((motor->steps <= motor->acc_lim) && (motor->steps <= motor->peak_velocity))
+	if(motor->steps <= motor->peak_velocity)
 	{
 		//motor->auto_reload = CLK_FRQ/(MIN_FREQ +((motor->steps)*motor->acceleration)/(ALPHA*100));
-		motor->auto_reload -= motor->auto_reload/(motor->steps+(100*ALPHA/motor->acceleration)*MIN_FREQ);
+
+		tmp=motor->rest;
+		motor->rest=(motor->auto_reload+tmp)%(motor->steps+(unsigned long)(MIN_VEL/motor->acceleration));
+		motor->auto_reload -= (motor->auto_reload + tmp)/(motor->steps+(unsigned long)(MIN_VEL/motor->acceleration));
+
+
 	}
-	else if((motor->steps > motor->acc_lim) && (motor->steps < motor->decel_start))
+	if((motor->steps > motor->acc_lim) && (motor->steps < motor->decel_start))
 	{
 		motor->auto_reload = motor->max_speed_ARR;
+		motor->rest=0;
 	}
-	else if(motor->steps >= motor->decel_start)
+	if(motor->steps >=motor->decel_start)
 	{
-		if(motor->starting_frequency == 0)
-		{
-			motor->starting_frequency = CLK_FRQ/motor->auto_reload*100;
-		}
-		motor ->auto_reload+= motor->auto_reload/(MIN_FREQ*ALPHA*100/motor->deceleration+motor->total_steps-1-motor->steps);
-	}else
-	{
-		motor->auto_reload = 52500;
+		tmp=motor->rest;
+		motor->rest = (motor->auto_reload+tmp)%(motor->total_steps - motor->steps + (unsigned long)(MIN_VEL/motor->deceleration));
+		motor->auto_reload += (motor->auto_reload+tmp)/(motor->total_steps - motor->steps + (unsigned long)(MIN_VEL/motor->deceleration));
+
 	}
+
+	if(motor->auto_reload>52500)
+		motor->auto_reload=52500;
+
+	else if(motor->auto_reload < 3000)
+		motor->auto_reload=3000;
+
 
 	motor->steps++;
 	return (motor->auto_reload);
 
 
 }
+*/
 
-
-void zero_tmp()
+unsigned long calculate_auto_reload(motorInfo *motor)
 {
 
-	data[0]=52500;
-	for(int j = 1;j<6400;j++)
-		data[j] = (unsigned long)calculate_auto_reload(&test);
+	unsigned tmp=0;
+	if(motor->steps < motor->total_steps)
+	{
+		motor->step_position+=motor->dir;
+	}
+	else
+		motor->state=STOP;
 
-	for(int j = 0;j<640;j++)
+	switch (motor->state)
+	{
+	case STOP:
+		HAL_TIM_OC_Stop(&htim2,TIM_CHANNEL_1);
+		flag_htim2_done=1;
+		return 52500;
+		break;
+	case ACCEL:
+		tmp=motor->rest;
+		motor->rest =(motor->auto_reload + tmp)%(motor->steps + (unsigned long)(MIN_VEL/motor->acceleration));
+		motor->auto_reload -= (motor->auto_reload + tmp)/(motor->steps + (unsigned long)(MIN_VEL/motor->acceleration));
+
+		if(motor->auto_reload >= motor->max_speed_ARR)
 		{
-		printf("%d: ",j);
-			for(int k =0;k<10;k++)
-				printf("%lu ",data[j+k]);
-			printf("\r\n");
-
+			motor->state=RUN;
+			motor->rest = 0;
+			motor->auto_reload=motor->max_speed_ARR;
+			motor->acc_lim=motor->steps;
+			motor->decel_start=motor->total_steps - motor->acc_lim*motor->acceleration/motor->deceleration;
 		}
-	kurwa[0]= 52500;
-	for(int j = 1; j<3200;j++)
-		kurwa[j]=kurwa[j-1]-10;
-	for(int j = 3200; j<6400;j++)
-			kurwa[j]=kurwa[j-1]+10;
+		if(motor->steps >= motor->peak_velocity)
+			motor->state=DECEL;
+		break;
+	case RUN:
+		if(motor->steps >= motor->decel_start);
+			motor->state=DECEL;
+		break;
+	case DECEL:
+		tmp = motor->rest;
+		motor->rest = (motor->auto_reload+tmp)%(motor->total_steps - motor->steps + (unsigned long)(MIN_VEL/motor->deceleration));
+		motor->auto_reload += (motor->auto_reload+tmp)/(motor->total_steps - motor->steps + (unsigned long)(MIN_VEL/motor->deceleration));
+
+		break;
+
+	}
+	if(motor->auto_reload>52500)
+		motor->auto_reload=52500;
+
+	else if(motor->auto_reload < 3000)
+		motor->auto_reload=3000;
+
+
+	motor->steps++;
+	return (motor->auto_reload);
+
 
 }
 
@@ -249,9 +310,8 @@ int main(void)
 
 
 
-	reset_motor(&test,6400,20,20,2700);
-
-	zero_tmp();
+	reset_motor(&test,6400,10,1,27000);
+	//zmiana skali, 100 = 1, predkosc bez zmian
 
 
 	  TIM2->ARR=52500;
@@ -259,14 +319,13 @@ int main(void)
 	  HAL_TIM_Base_Start_IT(&htim3);
 	  HAL_TIM_Base_Start_IT(&htim4);
 
-	  i=0;
 	  HAL_TIM_OC_Start(&htim2,TIM_CHANNEL_1);
 
   HAL_UARTEx_ReceiveToIdle_DMA(&huart2, RxBuf, RxBuf_SIZE);
   __HAL_DMA_DISABLE_IT(&hdma_usart2_rx,DMA_IT_HT);
 
 
-
+flag_htim2_done=flag_command_recieved=0;
 
   unsigned timer_val,accel,max_speed,steps,decel;
   /* USER CODE END 2 */
@@ -284,23 +343,28 @@ int main(void)
 
 	  if(flag_command_recieved)
 	  {
-		/*  memcpy(MainBuf,RxBuf,size_recieved);
+		  memcpy(MainBuf,RxBuf,size_recieved);
 		  		HAL_UARTEx_ReceiveToIdle_DMA(&huart2, RxBuf, RxBuf_SIZE);
 		  		__HAL_DMA_DISABLE_IT(&hdma_usart2_rx,DMA_IT_HT);
 
 		  		printf("Recieved: %s \r\n",MainBuf);
 		  		sscanf(MainBuf,"%d %u %u %u",&steps, &accel, &decel, &max_speed);
-		  		*///accel, decel in 0.01rad/s^2
+		  		//accel, decel in 0.01rad/s^2
 		  		//max_speed in 0.01rad/s
 
+		  		reset_motor(&test,steps,accel,decel,max_speed);
 
 
-/*
+
+		  		  TIM2->ARR=52500;
+
+
+
 		  		timer_val = __HAL_TIM_GET_COUNTER(&htim3);
 		  		flag_command_recieved=0;
 		  		HAL_TIM_OC_Start(&htim2,TIM_CHANNEL_1);
 
-	*/  }
+	  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -652,45 +716,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	if(htim == &htim2 )
 	{
-		/*
-		if(test.steps < test.total_steps)
-		{
 
-			TIM2->ARR = 84000000/(1600 +((test.steps)*test.acceleration)/100);
-			test.steps++;
-			if(TIM2->ARR <= test.max_speed_ARR)
-				TIM2->ARR = test.max_speed_ARR;
+		i++;
+		if(i==63999)
+			{i++;
+			i--;}
 
-		}
-		else
-		{
+		if(test.steps<=test.total_steps)
+			TIM2->ARR=calculate_auto_reload(&test);
 
-
-			HAL_TIM_OC_Stop(&htim2,TIM_CHANNEL_1);
-			flag_htim2_done=1;
-
-		}
-		*/
-
-
-
-		if(i<6400)
-		{
-
-			/*if(i<3200)
-			TIM2->ARR -= 10;
-			else
-			TIM2->ARR += 10;
-	*/
-			TIM2->ARR = data[i];
-			i++;
-		}
-		else
-		{
-			TIM2->ARR=0;
-			HAL_TIM_OC_Stop(&htim2,TIM_CHANNEL_1);
-			flag_htim2_done=1;
-		}
 
 	}
 }

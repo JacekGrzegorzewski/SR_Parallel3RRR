@@ -8,17 +8,17 @@
 #ifndef MOTOR_CONST_H_
 #define MOTOR_CONST_H_
 
-//timer frequency in Hz
+//minimum timer frequency in Hz
 #define MIN_FREQ 1600
-
-//steps per resolution ant 1/16 step driver mode
+#define MAX_FREQ 28000
+//steps per resolution at 1/16 step driver mode
 #define SPR 6400
 
 #define ALPHA (2*3.14159/SPR)
 #define CLK_FRQ 84000000
 
-#define MAX_VEL CLK_FRQ*ALPHA/30
-#define MIN_VEL CLK_FRQ*ALPHA/525
+#define MAX_VEL (CLK_FRQ*ALPHA/3)
+#define MIN_VEL (CLK_FRQ*ALPHA*10/525)
 
 #define STOP 0
 #define ACCEL 1
@@ -37,10 +37,11 @@ typedef struct motorInfo
 	unsigned long peak_velocity;
 	unsigned long decel_start;
 
-	unsigned long acceleration;
-	unsigned long deceleration;
+	unsigned acceleration;
+	unsigned deceleration;
 
-	unsigned long starting_frequency;
+	unsigned long rest;
+	char state;
 
 	unsigned long steps;
 	unsigned long total_steps;
