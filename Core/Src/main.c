@@ -49,6 +49,7 @@ uint8_t MainBuf[MainBuf_SIZE];
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 
+
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -61,7 +62,6 @@ DMA_HandleTypeDef hdma_usart2_rx;
 
 /* USER CODE BEGIN PV */
 
-int i = 0;
 
 
 motorInfo test;
@@ -98,45 +98,75 @@ int _write( int file,unsigned char *ptr, int len)
 //acc_lim ma jednostke czasu, a powinien jednoski wgle nie miec
 //jak naprawic bog jeden wie
 
-//dobra walic, i tak liczy dynamicznie to jak dojdzie do maksa to policzy decel
-void reset_motor(motorInfo *motor, long total_steps, unsigned accel, unsigned decel, unsigned max )
+//
+
+void init_movement(motorInfo *motor, long total_steps, unsigned accel, unsigned decel, unsigned max)
 {
 
-	HAL_TIM_OC_Stop(&htim2,TIM_CHANNEL_1);
 
-	max = max <= MIN_VEL? MIN_VEL:max;
-	motor->max_speed = (max >= MAX_VEL) ? MAX_VEL : max;
-	motor->dir = total_steps>0 ? 1 : -1;
-	motor->total_steps=total_steps>0?total_steps:-total_steps;
-	motor->auto_reload=52500;// length of current pulse in timer ticks
-	motor->rest=0;
-motor->state=ACCEL;
+		max = max <= MIN_VEL? MIN_VEL:max;
+		motor->max_speed = (max >= MAX_VEL) ? MAX_VEL : max;
+		motor->dir = total_steps>0 ? 1 : -1;
 
-	if(accel>1000)//przyspieszenie ogranczone do 1rad/s^2
-		accel=1000;
-	if(accel == 0)
-		accel=1;
+		HAL_GPIO_WritePin(motor->GPIOX, motor->GPIO_Label, motor->dir > 0);
 
-	if(decel>5000)//przyspieszenie ogranczone do 1rad/s^2
-			decel=5000;
-		if(decel == 0)
-			decel=1;
 
+		motor->total_steps=total_steps>0?total_steps:-total_steps;
+		motor->rest=0;
+		motor->state=ACCEL;
+
+		motor->auto_reload=CLK_FRQ*sqrt(2000*ALPHA/accel);// length of current pulse in timer ticks
+		motor->max_speed_ARR = CLK_FRQ*ALPHA*1000/motor->max_speed;
+
+		motor->accel_stop = motor->max_speed*motor->max_speed/(2*ALPHA*accel*1000);
+
+		if(!motor->accel_stop)
+			motor->accel_stop =1 ;
+
+
+		motor->peak_velocity=(motor->total_steps*decel)/(accel+decel);
+
+		if(!motor->peak_velocity)
+			motor->peak_velocity =1;
+
+		if(motor->accel_stop <= motor->peak_velocity)
+			motor->decel_start= motor->total_steps-motor->accel_stop;
+		else
+			motor->decel_start = motor->peak_velocity;
+
+
+
+		motor->movement_done=0;
+
+		motor->acceleration=accel;
+		motor->deceleration=decel;
+		motor->steps=0;
+
+
+		motor->timer->Instance->ARR=motor->auto_reload;
+		//generujemy update resetując rejestry
+		//bez tego nie działa, 4 godziny życia za mną :(
+		motor->timer->Instance->EGR |= TIM_EGR_UG;
+
+
+
+		HAL_TIM_OC_Start(motor->timer,TIM_CHANNEL_1);
+	    HAL_TIM_Base_Start_IT(motor->timer);
+
+
+
+
+}
+void reset_motor(motorInfo *motor,TIM_HandleTypeDef *timer,GPIO_TypeDef *GPIOX,uint16_t GPIO_Label)
+{
+	motor->timer = timer;
+	motor->GPIOX = GPIOX;
+	motor->GPIO_Label=GPIO_Label;
+	test.movement_done=1;
 	motor->step_position=0;
 
-
-
-	motor->peak_velocity=(motor->total_steps*decel)/(accel+decel);
-
-	motor->acceleration=accel;
-
-	motor->deceleration=decel;
-
-	motor->max_speed_ARR = CLK_FRQ*ALPHA*1000/motor->max_speed;
-
-	motor->steps=0;
-
-
+	HAL_GPIO_WritePin(motor->GPIOX, motor->GPIO_Label, motor->dir>0);
+	HAL_TIM_OC_Stop(motor->timer,TIM_CHANNEL_1);
 
 
 }
@@ -144,66 +174,10 @@ motor->state=ACCEL;
 
 
 
-//problem wynika z duego bledu dzielenia staloprzecinkowego
-//trzeba dodac poprawke i ewentualna blokade predkosci
-/*
-unsigned long calculate_auto_reload(motorInfo *motor)
-{
-
-	unsigned tmp=0;
-	if(motor->steps < motor->total_steps)
-	{
-		motor->step_position+=motor->dir;
-	}
-	else
-	{
-		HAL_TIM_OC_Stop(&htim2,TIM_CHANNEL_1);
-		flag_htim2_done=1;
-
-		return 52500;
-	}
-
-	if(motor->steps <= motor->peak_velocity)
-	{
-		//motor->auto_reload = CLK_FRQ/(MIN_FREQ +((motor->steps)*motor->acceleration)/(ALPHA*100));
-
-		tmp=motor->rest;
-		motor->rest=(motor->auto_reload+tmp)%(motor->steps+(unsigned long)(MIN_VEL/motor->acceleration));
-		motor->auto_reload -= (motor->auto_reload + tmp)/(motor->steps+(unsigned long)(MIN_VEL/motor->acceleration));
-
-
-	}
-	if((motor->steps > motor->acc_lim) && (motor->steps < motor->decel_start))
-	{
-		motor->auto_reload = motor->max_speed_ARR;
-		motor->rest=0;
-	}
-	if(motor->steps >=motor->decel_start)
-	{
-		tmp=motor->rest;
-		motor->rest = (motor->auto_reload+tmp)%(motor->total_steps - motor->steps + (unsigned long)(MIN_VEL/motor->deceleration));
-		motor->auto_reload += (motor->auto_reload+tmp)/(motor->total_steps - motor->steps + (unsigned long)(MIN_VEL/motor->deceleration));
-
-	}
-
-	if(motor->auto_reload>52500)
-		motor->auto_reload=52500;
-
-	else if(motor->auto_reload < 3000)
-		motor->auto_reload=3000;
-
-
-	motor->steps++;
-	return (motor->auto_reload);
-
-
-}
-*/
 
 unsigned long calculate_auto_reload(motorInfo *motor)
 {
 
-	unsigned tmp=0;
 	if(motor->steps < motor->total_steps)
 	{
 		motor->step_position+=motor->dir;
@@ -211,49 +185,51 @@ unsigned long calculate_auto_reload(motorInfo *motor)
 	else
 		motor->state=STOP;
 
+	motor->steps++;
+	unsigned long  tmp=0;
+
 	switch (motor->state)
 	{
 	case STOP:
-		HAL_TIM_OC_Stop(&htim2,TIM_CHANNEL_1);
+
+		motor->movement_done=1;
 		flag_htim2_done=1;
-		return 52500;
+		HAL_TIM_OC_Stop(motor->timer,TIM_CHANNEL_1);
+		HAL_TIM_Base_Stop_IT(motor->timer);
+
+		return motor->auto_reload;
 		break;
 	case ACCEL:
-		tmp=motor->rest;
-		motor->rest =(motor->auto_reload + tmp)%(motor->steps + (unsigned long)(MIN_VEL/motor->acceleration));
-		motor->auto_reload -= (motor->auto_reload + tmp)/(motor->steps + (unsigned long)(MIN_VEL/motor->acceleration));
 
-		if(motor->auto_reload >= motor->max_speed_ARR)
+		tmp=motor->rest;
+		motor->rest =(2*motor->auto_reload + tmp)%(4*motor->steps + 1);
+		motor->auto_reload -= (2*motor->auto_reload + tmp)/(4*motor->steps + 1);
+
+		if(motor->steps>=motor->decel_start)
 		{
-			motor->state=RUN;
-			motor->rest = 0;
-			motor->auto_reload=motor->max_speed_ARR;
-			motor->acc_lim=motor->steps;
-			motor->decel_start=motor->total_steps - motor->acc_lim*motor->acceleration/motor->deceleration;
-		}
-		if(motor->steps >= motor->peak_velocity)
 			motor->state=DECEL;
+		}
+		else if(motor->steps >= motor->accel_stop)
+		{
+			motor->state = RUN;
+			motor->rest = 0;
+			motor->auto_reload = motor->max_speed_ARR;
+		}
 		break;
 	case RUN:
-		if(motor->steps >= motor->decel_start);
-			motor->state=DECEL;
+		if(motor->steps >= motor->decel_start)
+				motor->state=DECEL;
 		break;
 	case DECEL:
-		tmp = motor->rest;
-		motor->rest = (motor->auto_reload+tmp)%(motor->total_steps - motor->steps + (unsigned long)(MIN_VEL/motor->deceleration));
-		motor->auto_reload += (motor->auto_reload+tmp)/(motor->total_steps - motor->steps + (unsigned long)(MIN_VEL/motor->deceleration));
-
+		tmp=motor->rest;
+		motor->rest =(long)((2*motor->auto_reload + motor->rest))%(4*((long)(motor->steps-motor->total_steps)) + 1);
+		motor->auto_reload -= (long)((2*motor->auto_reload + tmp))/(4*((long)(motor->steps-motor->total_steps)) + 1);
 		break;
 
 	}
-	if(motor->auto_reload>52500)
-		motor->auto_reload=52500;
-
-	else if(motor->auto_reload < 3000)
-		motor->auto_reload=3000;
 
 
-	motor->steps++;
+
 	return (motor->auto_reload);
 
 
@@ -276,9 +252,6 @@ unsigned long calculate_auto_reload(motorInfo *motor)
   */
 int main(void)
 {
-  /* USER CODE BEGIN 1 */
-
-	//stepp_array = (uint16_t *)calloc(1,sizeof(uint16_t));
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -310,16 +283,14 @@ int main(void)
 
 
 
-	reset_motor(&test,6400,10,1,27000);
-	//zmiana skali, 100 = 1, predkosc bez zmian
+	  reset_motor(&test,&htim2,STEPPER_DIR_1_GPIO_Port, STEPPER_DIR_1_Pin);
 
 
-	  TIM2->ARR=52500;
-	  HAL_TIM_Base_Start_IT(&htim2);
 	  HAL_TIM_Base_Start_IT(&htim3);
 	  HAL_TIM_Base_Start_IT(&htim4);
 
-	  HAL_TIM_OC_Start(&htim2,TIM_CHANNEL_1);
+
+
 
   HAL_UARTEx_ReceiveToIdle_DMA(&huart2, RxBuf, RxBuf_SIZE);
   __HAL_DMA_DISABLE_IT(&hdma_usart2_rx,DMA_IT_HT);
@@ -337,8 +308,9 @@ flag_htim2_done=flag_command_recieved=0;
 	  if(flag_htim2_done)
 	  {
 		  timer_val = __HAL_TIM_GET_COUNTER(&htim3)-timer_val;
-		  printf("Done, Steps: %d Time: %u (10000 - 1s)\r\n",test.steps,timer_val);
+		  printf("Done, MotorPos: %d\r\n",test.step_position);
 		  flag_htim2_done=0;
+
 	  }
 
 	  if(flag_command_recieved)
@@ -348,21 +320,16 @@ flag_htim2_done=flag_command_recieved=0;
 		  		__HAL_DMA_DISABLE_IT(&hdma_usart2_rx,DMA_IT_HT);
 
 		  		printf("Recieved: %s \r\n",MainBuf);
+
 		  		sscanf(MainBuf,"%d %u %u %u",&steps, &accel, &decel, &max_speed);
-		  		//accel, decel in 0.01rad/s^2
-		  		//max_speed in 0.01rad/s
-
-		  		reset_motor(&test,steps,accel,decel,max_speed);
-
-
-
-		  		  TIM2->ARR=52500;
-
+		  		//accel, decel in 1m rad/s^2
+		  		//max_speed in 1m rad/s
+		  		init_movement(&test,steps,accel,decel,max_speed);
 
 
 		  		timer_val = __HAL_TIM_GET_COUNTER(&htim3);
 		  		flag_command_recieved=0;
-		  		HAL_TIM_OC_Start(&htim2,TIM_CHANNEL_1);
+
 
 	  }
     /* USER CODE END WHILE */
@@ -631,7 +598,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOB, STEPPER_DIR_3_Pin|STEPPER_DIR_2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, STEPPER_DIR_1_Pin|MS3_Pin|MS2_Pin|MS1_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(STEPPER_DIR_1_GPIO_Port, STEPPER_DIR_1_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : STEPPER_DIR_3_Pin STEPPER_DIR_2_Pin */
   GPIO_InitStruct.Pin = STEPPER_DIR_3_Pin|STEPPER_DIR_2_Pin;
@@ -640,18 +607,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : STEPPER_DIR_1_Pin MS3_Pin MS2_Pin MS1_Pin */
-  GPIO_InitStruct.Pin = STEPPER_DIR_1_Pin|MS3_Pin|MS2_Pin|MS1_Pin;
+  /*Configure GPIO pin : STEPPER_DIR_1_Pin */
+  GPIO_InitStruct.Pin = STEPPER_DIR_1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : POSITIONED_1_Pin POSITIONED_2_Pin POSITIONED_3_Pin */
-  GPIO_InitStruct.Pin = POSITIONED_1_Pin|POSITIONED_2_Pin|POSITIONED_3_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(STEPPER_DIR_1_GPIO_Port, &GPIO_InitStruct);
 
 }
 
@@ -669,60 +630,13 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 
 }
 
-/*
-unsigned int calculate_perod(motorInfo *motor)
-{
-
-	if(motor->steps < motor->total_steps)
-			{
-				motor->steps++;
-				motor->step_position++;
-			}
-	else
-	{}
-
-				if(motor->accel_steps == 0)
-				{
-					motor->n++;
-					tmp = motor->rest;
-					motor->d -=2*motor->d/(4*motor->n+1);
-
-					if(motor->d <= motor->min_interval)
-					{
-						motor->d=motor->min_interval;
-						motor->accel_steps = motor->steps;
-					}
-					if(motor->steps >= motor->total_steps/2)
-						motor->accel_steps = motor->steps;
-
-				}
-				else if (motor->steps >= motor->total_steps - motor->accel_steps)
-				{
-					motor->n--;
-					motor->d *= (4*motor->n+1)/(4*motor->n+1-2);
-					tmp = motor->rest;
-
-
-				}
-
-				return motor->d;
-			}
-}
-
-*/
 
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-	if(htim == &htim2 )
+	if(htim == test.timer)
 	{
-
-		i++;
-		if(i==63999)
-			{i++;
-			i--;}
-
-		if(test.steps<=test.total_steps)
+		if(!test.movement_done)
 			TIM2->ARR=calculate_auto_reload(&test);
 
 

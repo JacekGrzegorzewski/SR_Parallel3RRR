@@ -1,6 +1,6 @@
 ################################################################################
 # Automatically-generated file. Do not edit!
-# Toolchain: GNU Tools for STM32 (9-2020-q2-update)
+# Toolchain: GNU Tools for STM32 (10.3-2021.10)
 ################################################################################
 
 -include ../makefile.init
@@ -43,14 +43,14 @@ BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ART
 EXECUTABLES += \
 SR_Parallel3RRR.elf \
 
+MAP_FILES += \
+SR_Parallel3RRR.map \
+
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
 SR_Parallel3RRR.list \
-
-OBJCOPY_BIN += \
-SR_Parallel3RRR.bin \
 
 
 # All Target
@@ -60,8 +60,8 @@ all: main-build
 main-build: SR_Parallel3RRR.elf secondary-outputs
 
 # Tool invocations
-SR_Parallel3RRR.elf: $(OBJS) $(USER_OBJS) /home/jacek/STM32CubeIDE/workspace_1.8.0/SR_Parallel3RRR/STM32F401RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "SR_Parallel3RRR.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/jacek/STM32CubeIDE/workspace_1.8.0/SR_Parallel3RRR/STM32F401RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="SR_Parallel3RRR.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+SR_Parallel3RRR.elf SR_Parallel3RRR.map: $(OBJS) $(USER_OBJS) /home/jacek/STM32CubeIDE/workspace_1.9.0/SR_Parallel3RRR/STM32F401RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "SR_Parallel3RRR.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/jacek/STM32CubeIDE/workspace_1.9.0/SR_Parallel3RRR/STM32F401RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="SR_Parallel3RRR.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -75,17 +75,12 @@ SR_Parallel3RRR.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-SR_Parallel3RRR.bin: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objcopy  -O binary $(EXECUTABLES) "SR_Parallel3RRR.bin"
-	@echo 'Finished building: $@'
-	@echo ' '
-
 # Other Targets
 clean:
-	-$(RM) SR_Parallel3RRR.bin SR_Parallel3RRR.elf SR_Parallel3RRR.list default.size.stdout
+	-$(RM) SR_Parallel3RRR.elf SR_Parallel3RRR.list SR_Parallel3RRR.map default.size.stdout
 	-@echo ' '
 
-secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST) $(OBJCOPY_BIN)
+secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)
 
 fail-specified-linker-script-missing:
 	@echo 'Error: Cannot find the specified linker script. Check the linker settings in the build configuration.'

@@ -30,22 +30,23 @@ typedef struct motorInfo
 //unsigned min_interval ; // == 1/max_speed
 	unsigned long max_speed;
 	unsigned long  max_speed_ARR;
-	char dir;
-	unsigned long auto_reload;// length of current pulse in timer ticks
+	int dir;
+	volatile unsigned long auto_reload;// length of current pulse in timer ticks
 
-	unsigned long acc_lim;
+	TIM_HandleTypeDef *timer;
+	GPIO_TypeDef *GPIOX;
+	uint16_t GPIO_Label;
 	unsigned long peak_velocity;
+	unsigned long accel_stop;
 	unsigned long decel_start;
-
-	unsigned acceleration;
-	unsigned deceleration;
-
-	unsigned long rest;
-	char state;
-
-	unsigned long steps;
+	unsigned long acceleration;
+	unsigned long deceleration;
+	volatile unsigned long rest;
+	volatile char state;
+	volatile unsigned long steps;
 	unsigned long total_steps;
 	volatile long step_position;
+	volatile char movement_done;
 
 }motorInfo;
 
