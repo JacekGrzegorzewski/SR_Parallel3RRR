@@ -61,7 +61,7 @@ main-build: SR_Parallel3RRR.elf secondary-outputs
 
 # Tool invocations
 SR_Parallel3RRR.elf SR_Parallel3RRR.map: $(OBJS) $(USER_OBJS) /home/jacek/STM32CubeIDE/workspace_1.9.0/SR_Parallel3RRR/STM32F401RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "SR_Parallel3RRR.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/jacek/STM32CubeIDE/workspace_1.9.0/SR_Parallel3RRR/STM32F401RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="SR_Parallel3RRR.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+	arm-none-eabi-gcc -o "SR_Parallel3RRR.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/jacek/STM32CubeIDE/workspace_1.9.0/SR_Parallel3RRR/STM32F401RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="SR_Parallel3RRR.map" -Wl,--gc-sections -static -u _printf_float --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

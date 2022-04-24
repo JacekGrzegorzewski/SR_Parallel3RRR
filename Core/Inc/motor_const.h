@@ -46,7 +46,15 @@ typedef struct motorInfo
 	volatile unsigned long steps;
 	unsigned long total_steps;
 	volatile long step_position;
+
+
+
+	unsigned long T1,T2,T3;
+	double acc_time;
+	double time_to_complete;
+
 	volatile char movement_done;
+	volatile char display_flag;
 
 }motorInfo;
 

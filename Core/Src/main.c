@@ -56,6 +56,7 @@ uint8_t MainBuf[MainBuf_SIZE];
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
+TIM_HandleTypeDef htim5;
 
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
@@ -82,6 +83,7 @@ static void MX_TIM4_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_TIM5_Init(void);
 /* USER CODE BEGIN PFP */
 
 int _write( int file,unsigned char *ptr, int len)
@@ -94,13 +96,35 @@ int _write( int file,unsigned char *ptr, int len)
 
 
 
-//jednostki sie nie zgadzaja w rownaniu roznicowym
-//acc_lim ma jednostke czasu, a powinien jednoski wgle nie miec
-//jak naprawic bog jeden wie
+float correction(unsigned long steps, unsigned long accel, unsigned long decel, unsigned max)
+{
+	return 1.0;
+}
 
-//
 
-void init_movement(motorInfo *motor, long total_steps, unsigned accel, unsigned decel, unsigned max)
+float estimate_ttc(motorInfo *motor)
+{
+	float tmp;
+	if(motor->accel_stop <= motor->peak_velocity)
+		{
+		motor->acc_time= motor->max_speed/(double)motor->acceleration;
+			tmp = (motor->max_speed)*((double)1/motor->acceleration +(double)1/motor->deceleration);
+			tmp += (motor->decel_start-motor->accel_stop)*(double)ALPHA*1000/motor->max_speed;
+		}
+	else
+		{
+			/*tmp = (double)sqrt(2000*ALPHA*motor->total_steps);
+			tmp *=1.0/sqrt(motor->acceleration) + 1.0/sqrt(motor->deceleration);
+			*/
+			motor->acc_time=sqrt(2000*ALPHA*motor->peak_velocity/motor->acceleration);
+			tmp=sqrt(2000*ALPHA*motor->peak_velocity/motor->acceleration)+sqrt(2000*ALPHA*(motor->total_steps-motor->peak_velocity)/motor->deceleration);
+
+		}
+
+	return tmp*correction(motor->total_steps,motor->acceleration,motor->deceleration,motor->max_speed);
+}
+
+void init_movement(motorInfo *motor, long total_steps, unsigned long accel, unsigned long decel, unsigned max)
 {
 
 
@@ -115,33 +139,33 @@ void init_movement(motorInfo *motor, long total_steps, unsigned accel, unsigned 
 		motor->rest=0;
 		motor->state=ACCEL;
 
-		motor->auto_reload=CLK_FRQ*sqrt(2000*ALPHA/accel);// length of current pulse in timer ticks
+		motor->auto_reload=0.676*CLK_FRQ*sqrt(2000*ALPHA/accel);// length of current pulse in timer ticks
 		motor->max_speed_ARR = CLK_FRQ*ALPHA*1000/motor->max_speed;
-
-		motor->accel_stop = motor->max_speed*motor->max_speed/(2*ALPHA*accel*1000);
+		motor->accel_stop = motor->max_speed*motor->max_speed/(2000*ALPHA*accel);
 
 		if(!motor->accel_stop)
 			motor->accel_stop =1 ;
 
 
-		motor->peak_velocity=(motor->total_steps*decel)/(accel+decel);
+		motor->peak_velocity=(motor->total_steps*(unsigned long long)decel)/(accel+decel);
 
 		if(!motor->peak_velocity)
 			motor->peak_velocity =1;
 
 		if(motor->accel_stop <= motor->peak_velocity)
-			motor->decel_start= motor->total_steps-motor->accel_stop;
+			motor->decel_start= (motor->total_steps-(motor->accel_stop*accel)/decel);
 		else
 			motor->decel_start = motor->peak_velocity;
 
 
-
 		motor->movement_done=0;
-
 		motor->acceleration=accel;
 		motor->deceleration=decel;
 		motor->steps=0;
 
+		motor->time_to_complete=estimate_ttc(motor);
+
+		motor->T1=motor->T2=motor->T3=0;
 
 		motor->timer->Instance->ARR=motor->auto_reload;
 		//generujemy update resetując rejestry
@@ -149,7 +173,7 @@ void init_movement(motorInfo *motor, long total_steps, unsigned accel, unsigned 
 		motor->timer->Instance->EGR |= TIM_EGR_UG;
 
 
-
+  		motor->T1 = __HAL_TIM_GET_COUNTER(&htim5);
 		HAL_TIM_OC_Start(motor->timer,TIM_CHANNEL_1);
 	    HAL_TIM_Base_Start_IT(motor->timer);
 
@@ -197,6 +221,9 @@ unsigned long calculate_auto_reload(motorInfo *motor)
 		HAL_TIM_OC_Stop(motor->timer,TIM_CHANNEL_1);
 		HAL_TIM_Base_Stop_IT(motor->timer);
 
+
+			motor->T3 = __HAL_TIM_GET_COUNTER(&htim5) - motor->T3;
+
 		return motor->auto_reload;
 		break;
 	case ACCEL:
@@ -206,19 +233,34 @@ unsigned long calculate_auto_reload(motorInfo *motor)
 		motor->auto_reload -= (2*motor->auto_reload + tmp)/(4*motor->steps + 1);
 
 		if(motor->steps>=motor->decel_start)
-		{
-			motor->state=DECEL;
-		}
+			{
+	  		 motor->T1 = __HAL_TIM_GET_COUNTER(&htim5)-motor->T1;
+
+	  	//	 htim5.Instance->CNT=0;
+	  		 motor->T3 =  __HAL_TIM_GET_COUNTER(&htim5);
+
+				motor->state=DECEL;
+			}
 		else if(motor->steps >= motor->accel_stop)
 		{
+			motor->T1 = __HAL_TIM_GET_COUNTER(&htim5)-motor->T1;
+
+		//	 htim5.Instance->CNT=0;
+			motor->T2 =  __HAL_TIM_GET_COUNTER(&htim5);
+
 			motor->state = RUN;
-			motor->rest = 0;
 			motor->auto_reload = motor->max_speed_ARR;
 		}
 		break;
 	case RUN:
 		if(motor->steps >= motor->decel_start)
-				motor->state=DECEL;
+		{
+			motor->T2 =  __HAL_TIM_GET_COUNTER(&htim5)-motor->T2;
+		//	htim5.Instance->CNT=0;
+			motor->T3 =  __HAL_TIM_GET_COUNTER(&htim5);
+			motor->state=DECEL;
+				//motor->rest=0;
+		}
 		break;
 	case DECEL:
 		tmp=motor->rest;
@@ -252,6 +294,8 @@ unsigned long calculate_auto_reload(motorInfo *motor)
   */
 int main(void)
 {
+  /* USER CODE BEGIN 1 */
+
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -277,6 +321,7 @@ int main(void)
   MX_TIM2_Init();
   MX_DMA_Init();
   MX_USART2_UART_Init();
+  MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
 
 
@@ -288,7 +333,7 @@ int main(void)
 
 	  HAL_TIM_Base_Start_IT(&htim3);
 	  HAL_TIM_Base_Start_IT(&htim4);
-
+	  HAL_TIM_Base_Start_IT(&htim5);
 
 
 
@@ -298,6 +343,7 @@ int main(void)
 
 flag_htim2_done=flag_command_recieved=0;
 
+float tmp;
   unsigned timer_val,accel,max_speed,steps,decel;
   /* USER CODE END 2 */
 
@@ -307,8 +353,15 @@ flag_htim2_done=flag_command_recieved=0;
   {
 	  if(flag_htim2_done)
 	  {
-		  timer_val = __HAL_TIM_GET_COUNTER(&htim3)-timer_val;
-		  printf("Done, MotorPos: %d\r\n",test.step_position);
+		  timer_val = __HAL_TIM_GET_COUNTER(&htim5)-timer_val;
+
+		  printf("Done in %f, expected: %f MotorPos: %d\r\n",timer_val/1000000.0,test.time_to_complete, test.step_position);
+		  printf("Time breakdown --- T1: %f   T2: %f   T3: %f\r\n", (double)test.T1/1000000, (double)test.T2/1000000, (double)test.T3/1000000);
+		tmp = ((double)test.T1/1000000+(double)test.T2/1000000+(double)test.T3/1000000);
+		 printf("T_approx - T_exact : %fs , Error as percentege of actual time %f \n",test.time_to_complete-tmp,(test.time_to_complete*100.0/tmp-100.0));
+		 tmp = ((double)test.T1/1000000);
+		 printf("acc time estimate: %fs ,Delta %fs, error as percentage: %f",test.acc_time,(test.acc_time-tmp), test.acc_time*100.0/tmp-100.0);
+		  printf("\r\n\r\n---------\r\n\r\n");
 		  flag_htim2_done=0;
 
 	  }
@@ -327,7 +380,8 @@ flag_htim2_done=flag_command_recieved=0;
 		  		init_movement(&test,steps,accel,decel,max_speed);
 
 
-		  		timer_val = __HAL_TIM_GET_COUNTER(&htim3);
+		  		//htim5.Instance->CNT=0;
+		  		timer_val = __HAL_TIM_GET_COUNTER(&htim5);
 		  		flag_command_recieved=0;
 
 
@@ -527,6 +581,51 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 2 */
   HAL_TIM_MspPostInit(&htim4);
+
+}
+
+/**
+  * @brief TIM5 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM5_Init(void)
+{
+
+  /* USER CODE BEGIN TIM5_Init 0 */
+
+  /* USER CODE END TIM5_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM5_Init 1 */
+
+  /* USER CODE END TIM5_Init 1 */
+  htim5.Instance = TIM5;
+  htim5.Init.Prescaler = 84-1;
+  htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim5.Init.Period = 4294967295;
+  htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim5.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim5, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim5, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM5_Init 2 */
+
+  /* USER CODE END TIM5_Init 2 */
 
 }
 
