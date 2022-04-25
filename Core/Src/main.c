@@ -139,8 +139,8 @@ void init_movement(motorInfo *motor, long total_steps, unsigned long accel, unsi
 		motor->rest=0;
 		motor->state=ACCEL;
 
-		motor->auto_reload=0.676*CLK_FRQ*sqrt(2000*ALPHA/accel);// length of current pulse in timer ticks
-		motor->max_speed_ARR = CLK_FRQ*ALPHA*1000/motor->max_speed;
+		motor->auto_reload=0.676*CLK_FRQ*sqrt(2000*ALPHA/accel)/(motor->timer->Instance->PSC+1);// length of current pulse in timer ticks
+		motor->max_speed_ARR = CLK_FRQ*ALPHA*1000/motor->max_speed/(motor->timer->Instance->PSC+1);
 		motor->accel_stop = motor->max_speed*motor->max_speed/(2000*ALPHA*accel);
 
 		if(!motor->accel_stop)
@@ -456,9 +456,9 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 1-1;
+  htim2.Init.Prescaler = 400-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 84-1;
+  htim2.Init.Period = 400-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_OC_Init(&htim2) != HAL_OK)
