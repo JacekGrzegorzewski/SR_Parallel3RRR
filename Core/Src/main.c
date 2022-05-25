@@ -96,9 +96,14 @@ int _write( int file,unsigned char *ptr, int len)
 
 
 
-float correction(unsigned long steps, unsigned long accel, unsigned long decel, unsigned max)
+float correction(unsigned long steps, unsigned long accel)
 {
-	return 1.0;
+
+	if(accel ==0)
+		return 0;
+	if(steps ==0)
+		return 0;
+	return pow(50,0.5)*((-0.1956)*pow(steps,-0.4198)+(0.1559*0.9885))/sqrt(accel);
 }
 
 
@@ -108,7 +113,7 @@ float estimate_ttc(motorInfo *motor)
 	if(motor->accel_stop <= motor->peak_velocity)
 		{
 		motor->acc_time= motor->max_speed/(double)motor->acceleration;
-			tmp = (motor->max_speed)*((double)1/motor->acceleration +(double)1/motor->deceleration);
+			tmp = (motor->max_speed)*((double)1/motor->acceleration +(double)1/motor->deceleration)-correction(motor->accel_stop,motor->acceleration) - correction(motor->total_steps-motor->decel_start,motor->deceleration);
 			tmp += (motor->decel_start-motor->accel_stop)*(double)ALPHA*1000/motor->max_speed;
 		}
 	else
@@ -117,11 +122,43 @@ float estimate_ttc(motorInfo *motor)
 			tmp *=1.0/sqrt(motor->acceleration) + 1.0/sqrt(motor->deceleration);
 			*/
 			motor->acc_time=sqrt(2000*ALPHA*motor->peak_velocity/motor->acceleration);
-			tmp=sqrt(2000*ALPHA*motor->peak_velocity/motor->acceleration)+sqrt(2000*ALPHA*(motor->total_steps-motor->peak_velocity)/motor->deceleration);
+			tmp=sqrt(2000*ALPHA*motor->peak_velocity/motor->acceleration)-correction(motor->peak_velocity,motor->acceleration);
+
+			tmp+=sqrt(2000*ALPHA*(motor->total_steps-motor->peak_velocity)/motor->deceleration)-correction(motor->total_steps-motor->peak_velocity,motor->deceleration);
+			motor->dec_time=sqrt(2000*ALPHA*(motor->total_steps-motor->peak_velocity)/motor->deceleration);
+
+
 
 		}
 
-	return tmp*correction(motor->total_steps,motor->acceleration,motor->deceleration,motor->max_speed);
+
+	//motor->time_before_correction =tmp;
+	return tmp;
+}
+
+
+unsigned long acc_phase_time(unsigned long steps, unsigned long time) //
+{
+	unsigned long time = pow((sqrt(2*ALPHA*steps)-pow(20.0,-0.5)*((-0.1956)*pow(steps,-0.4198)+(0.1559*0.9885)))/(double)time,2);
+
+}
+
+unsigned long desired_acceleration(unsigned long steps, unsigned long time)
+{
+	//jeżeli czas jest za krótki by wykonać ruch z maksymalną prędkością, zostanie wydłużony do tego czasu, i odwrotnie jezeli czas jest za dlugi
+
+
+		if(ALPHA*steps/MAX_VEL > time)
+			time = 0.95*(ALPHA*steps/MAX_VEL);//mnożymy przez 0.95 by zapewnić płynniejsze przyspieszanie niż gwałtowny skok z 0 do max
+
+		if(ALPHA*steps/MIN_VEL < time)
+			time = 1.05*(ALPHA*steps/MIN_VEL);//jezeli czas jest za długi by ruch w nim wykonac z prędkością minimalną
+
+
+		//przypadek bez ruchu jednostajnego
+
+
+
 }
 
 void init_movement(motorInfo *motor, long total_steps, unsigned long accel, unsigned long decel, unsigned max)
@@ -181,6 +218,27 @@ void init_movement(motorInfo *motor, long total_steps, unsigned long accel, unsi
 
 
 }
+
+void init_movement_time(motorInfo *motor,long total_steps, unsigned long time)
+{
+
+
+
+
+	unsigned long accel = total_steps*ALPHA/pow(time/1000.0,2);
+	if(accel*time/(2.0*pow(1000,2))<MAX_VEL)//jeżeli nie osiągamy maksymalnej prędkości nie ma ruchu jednostajnego
+		init_movement(motor,total_steps,accel,accel,MAX_VEL);
+	else
+		;
+	//przypadek z ruchem jednostajnym
+
+
+
+
+
+}
+
+
 void reset_motor(motorInfo *motor,TIM_HandleTypeDef *timer,GPIO_TypeDef *GPIOX,uint16_t GPIO_Label)
 {
 	motor->timer = timer;
@@ -337,6 +395,7 @@ int main(void)
 
 
 
+
   HAL_UARTEx_ReceiveToIdle_DMA(&huart2, RxBuf, RxBuf_SIZE);
   __HAL_DMA_DISABLE_IT(&hdma_usart2_rx,DMA_IT_HT);
 
@@ -345,6 +404,7 @@ flag_htim2_done=flag_command_recieved=0;
 
 float tmp;
   unsigned timer_val,accel,max_speed,steps,decel;
+  unsigned steps_1,steps_2,time;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -355,12 +415,12 @@ float tmp;
 	  {
 		  timer_val = __HAL_TIM_GET_COUNTER(&htim5)-timer_val;
 
-		  printf("Done in %f, expected: %f MotorPos: %d\r\n",timer_val/1000000.0,test.time_to_complete, test.step_position);
+		  printf("Done in %f, expected: %f corrected: %f MotorPos: %d\r\n",timer_val/1000000.0,test.acc_time+test.dec_time,test.time_to_complete, test.step_position);
 		  printf("Time breakdown --- T1: %f   T2: %f   T3: %f\r\n", (double)test.T1/1000000, (double)test.T2/1000000, (double)test.T3/1000000);
-		tmp = ((double)test.T1/1000000+(double)test.T2/1000000+(double)test.T3/1000000);
-		 printf("T_approx - T_exact : %fs , Error as percentege of actual time %f \n",test.time_to_complete-tmp,(test.time_to_complete*100.0/tmp-100.0));
-		 tmp = ((double)test.T1/1000000);
-		 printf("acc time estimate: %fs ,Delta %fs, error as percentage: %f",test.acc_time,(test.acc_time-tmp), test.acc_time*100.0/tmp-100.0);
+		  tmp = ((double)test.T1/1000000+(double)test.T2/1000000+(double)test.T3/1000000);
+		  printf("T_approx - T_exact : %fs , Error as percentege of actual time %f \n",test.time_to_complete-tmp,(test.time_to_complete*100.0/tmp-100.0));
+		  tmp = ((double)test.T1/1000000);
+		  printf("acc time estimate: %fs ,Delta %fs, error as percentage: %f",test.acc_time,(test.acc_time-tmp), test.acc_time*100.0/tmp-100.0);
 		  printf("\r\n\r\n---------\r\n\r\n");
 		  flag_htim2_done=0;
 
@@ -368,21 +428,20 @@ float tmp;
 
 	  if(flag_command_recieved)
 	  {
-		  memcpy(MainBuf,RxBuf,size_recieved);
-		  		HAL_UARTEx_ReceiveToIdle_DMA(&huart2, RxBuf, RxBuf_SIZE);
-		  		__HAL_DMA_DISABLE_IT(&hdma_usart2_rx,DMA_IT_HT);
+			memcpy(MainBuf, RxBuf, size_recieved);
+			HAL_UARTEx_ReceiveToIdle_DMA(&huart2, RxBuf, RxBuf_SIZE);
+			__HAL_DMA_DISABLE_IT(&hdma_usart2_rx, DMA_IT_HT);
 
-		  		printf("Recieved: %s \r\n",MainBuf);
+			printf("Recieved: %s \r\n", MainBuf);
 
-		  		sscanf(MainBuf,"%d %u %u %u",&steps, &accel, &decel, &max_speed);
-		  		//accel, decel in 1m rad/s^2
-		  		//max_speed in 1m rad/s
-		  		init_movement(&test,steps,accel,decel,max_speed);
+			sscanf(MainBuf, "%d %u %u %u", &steps, &accel, &decel, &max_speed);
+			//accel, decel in 1m rad/s^2
+			//max_speed in 1m rad/s
+			init_movement(&test, steps, accel, decel, max_speed);
 
-
-		  		//htim5.Instance->CNT=0;
-		  		timer_val = __HAL_TIM_GET_COUNTER(&htim5);
-		  		flag_command_recieved=0;
+			//htim5.Instance->CNT	=0;
+			timer_val = __HAL_TIM_GET_COUNTER(&htim5);
+			flag_command_recieved = 0;
 
 
 	  }

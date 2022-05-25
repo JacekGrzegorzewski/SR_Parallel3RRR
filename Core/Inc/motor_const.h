@@ -51,7 +51,10 @@ typedef struct motorInfo
 
 	unsigned long T1,T2,T3;
 	double acc_time;
+	double dec_time;
+
 	double time_to_complete;
+	double time_before_correction;
 
 	volatile char movement_done;
 	volatile char display_flag;
