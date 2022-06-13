@@ -68,8 +68,15 @@ DMA_HandleTypeDef hdma_usart2_rx;
 motorInfo test;
 
 
+motorInfo motor_1;
+motorInfo motor_2;
+motorInfo motor_3;
 
-volatile int flag_htim2_done=0;
+
+volatile int flag_motor_1_done=0;
+volatile int flag_motor_2_done=0;
+volatile int flag_motor_3_done=0;
+
 volatile int flag_command_recieved = 0;
 uint16_t size_recieved=0;
 
@@ -113,8 +120,9 @@ float estimate_ttc(motorInfo *motor)
 	if(motor->accel_stop <= motor->peak_velocity)
 		{
 		motor->acc_time= motor->max_speed/(double)motor->acceleration;
-			tmp = (motor->max_speed)*((double)1/motor->acceleration +(double)1/motor->deceleration)-correction(motor->accel_stop,motor->acceleration) - correction(motor->total_steps-motor->decel_start,motor->deceleration);
-			tmp += (motor->decel_start-motor->accel_stop)*(double)ALPHA*1000/motor->max_speed;
+		tmp = (motor->max_speed)*((double)1/motor->acceleration +(double)1/motor->deceleration);
+		//tmp = (motor->max_speed)*((double)1/motor->acceleration +(double)1/motor->deceleration)-correction(motor->accel_stop,motor->acceleration) - correction(motor->total_steps-motor->decel_start,motor->deceleration);
+		tmp += (motor->decel_start-motor->accel_stop)*(double)ALPHA*1000/motor->max_speed;
 		}
 	else
 		{
@@ -122,12 +130,12 @@ float estimate_ttc(motorInfo *motor)
 			tmp *=1.0/sqrt(motor->acceleration) + 1.0/sqrt(motor->deceleration);
 			*/
 			motor->acc_time=sqrt(2000*ALPHA*motor->peak_velocity/motor->acceleration);
-			tmp=sqrt(2000*ALPHA*motor->peak_velocity/motor->acceleration)-correction(motor->peak_velocity,motor->acceleration);
+			//tmp=sqrt(2000*ALPHA*motor->peak_velocity/motor->acceleration)-correction(motor->peak_velocity,motor->acceleration);
+			tmp=sqrt(2000*ALPHA*motor->peak_velocity/motor->acceleration);
 
-			tmp+=sqrt(2000*ALPHA*(motor->total_steps-motor->peak_velocity)/motor->deceleration)-correction(motor->total_steps-motor->peak_velocity,motor->deceleration);
+		//	tmp+=sqrt(2000*ALPHA*(motor->total_steps-motor->peak_velocity)/motor->deceleration)-correction(motor->total_steps-motor->peak_velocity,motor->deceleration);
+			tmp+=sqrt(2000*ALPHA*(motor->total_steps-motor->peak_velocity)/motor->deceleration);
 			motor->dec_time=sqrt(2000*ALPHA*(motor->total_steps-motor->peak_velocity)/motor->deceleration);
-
-
 
 		}
 
@@ -137,9 +145,35 @@ float estimate_ttc(motorInfo *motor)
 }
 
 
-unsigned long acc_phase_time(unsigned long steps, unsigned long time) //
+double acc_equation(unsigned long steps, unsigned long time,unsigned long acc)//równanie opisujące przyspieszenie w przypadku z ruchem jednostajnym
 {
-	unsigned long time = pow((sqrt(2*ALPHA*steps)-pow(20.0,-0.5)*((-0.1956)*pow(steps,-0.4198)+(0.1559*0.9885)))/(double)time,2);
+	double eq = MAX_VEL*1000/acc;
+	eq -= 2*pow(50,0.5)*(0.1559*0.9885)/sqrt(acc);
+	eq -= 2*pow(50,0.5)*(-0.1956)*pow(MAX_VEL/(2*ALPHA),-0.4198)/pow(acc,0.5-0.4198);
+	eq -= time-steps*ALPHA/MAX_VEL;
+
+	return eq;
+}
+
+unsigned long secant_acc(unsigned long steps, unsigned long time)
+{
+
+	//ograniczyc wartosci
+
+	double x_n2=0.01;
+	double x_n1=10000;
+
+	double tmp;
+
+	while(fabs(x_n1-x_n2)>=0.01)
+	{
+		tmp=x_n1;
+		x_n1=x_n1-acc_equation(steps, time, x_n1)*(x_n1-x_n2)/(acc_equation(steps, time, x_n1)-acc_equation(steps, time, x_n2));
+		x_n2=tmp;
+	}
+
+
+	return x_n1;
 
 }
 
@@ -147,17 +181,66 @@ unsigned long desired_acceleration(unsigned long steps, unsigned long time)
 {
 	//jeżeli czas jest za krótki by wykonać ruch z maksymalną prędkością, zostanie wydłużony do tego czasu, i odwrotnie jezeli czas jest za dlugi
 
-
+/*
 		if(ALPHA*steps/MAX_VEL > time)
 			time = 0.95*(ALPHA*steps/MAX_VEL);//mnożymy przez 0.95 by zapewnić płynniejsze przyspieszanie niż gwałtowny skok z 0 do max
 
 		if(ALPHA*steps/MIN_VEL < time)
 			time = 1.05*(ALPHA*steps/MIN_VEL);//jezeli czas jest za długi by ruch w nim wykonac z prędkością minimalną
+*/
+	//	printf("time: %ld\r\n",time);
+
+		unsigned long t_acc;//czas w jakim wykonany by był ruch z największym przyspieszeniem nie powodującym ruchu jednostajnego
+/*
+		t_acc=2000*ALPHA*steps;
+		printf("timeacc: %f\r\n",t_acc);
+		t_acc -= 2000*pow(50,0.5)*((-0.1956)*pow(steps/2,-0.4198)+(0.1559*0.9885))*sqrt(ALPHA*steps);
+		printf("timeacc: %f\r\n",t_acc);
+		t_acc /=MAX_VEL;
+		printf("timeacc: %f\r\n",t_acc);
+		printf("FIN\r\n");
+*/
+
+		t_acc = 2000000*ALPHA*steps/MAX_VEL;
+		unsigned long desired_acc;
+
+		printf("t_acc: %lu\r\n",t_acc);
+		double tmp;
+
+		if(time>=t_acc) //przypadek bez ruchu jednostajnego
+		{
+			/*
+			tmp= pow(2000*(sqrt(ALPHA*steps)-pow(50,0.5)*((-0.1956)*pow(steps*0.5,-0.4198)+(0.1559*0.9885))),2);
+			printf("calculated_acc: %f\r\n",tmp);
+
+			tmp *=1000;
+			printf("calculated_acc: %f\r\n",tmp);
+
+			tmp /=pow(time,2);
+			desired_acc=tmp;
+			printf("calculated_acc: %f\r\n",tmp);
+			printf("FIN\r\n");
+*/
+
+			tmp = 4*ALPHA*steps/pow(time,2);
+			desired_acc = tmp*pow(1000,3);
 
 
-		//przypadek bez ruchu jednostajnego
+		}
+		else // przypadek z ruchem jednostajnym
+		{
+
+			//desired_acc= secant_acc(steps, time);
+			tmp = MAX_VEL*time-pow(1000,2)*ALPHA*steps;
+			desired_acc = 1000*pow(MAX_VEL,2)/tmp;
+
+		}
 
 
+		if(desired_acc>8000000)//maksymalne możliwe przyspieszenie, wartość trochę mniejsza niż wyliczona by nie dopuścić do zbyt gwałtownych ruchów
+			desired_acc=8000000;
+
+			return desired_acc;
 
 }
 
@@ -208,36 +291,29 @@ void init_movement(motorInfo *motor, long total_steps, unsigned long accel, unsi
 		//generujemy update resetując rejestry
 		//bez tego nie działa, 4 godziny życia za mną :(
 		motor->timer->Instance->EGR |= TIM_EGR_UG;
+//printf("TUTAJ");
 
 
-  		motor->T1 = __HAL_TIM_GET_COUNTER(&htim5);
-		HAL_TIM_OC_Start(motor->timer,TIM_CHANNEL_1);
-	    HAL_TIM_Base_Start_IT(motor->timer);
+}
 
-
-
-
+void begin_movement(motorInfo *motor)
+{
+	motor->T1 = __HAL_TIM_GET_COUNTER(&htim5);
+	motor->movement_start=__HAL_TIM_GET_COUNTER(&htim5);
+	HAL_TIM_OC_Start(motor->timer,TIM_CHANNEL_1);
+	HAL_TIM_Base_Start_IT(motor->timer);
 }
 
 void init_movement_time(motorInfo *motor,long total_steps, unsigned long time)
 {
 
 
+	unsigned long accel = desired_acceleration(abs(total_steps), time);
 
-
-	unsigned long accel = total_steps*ALPHA/pow(time/1000.0,2);
-	if(accel*time/(2.0*pow(1000,2))<MAX_VEL)//jeżeli nie osiągamy maksymalnej prędkości nie ma ruchu jednostajnego
-		init_movement(motor,total_steps,accel,accel,MAX_VEL);
-	else
-		;
-	//przypadek z ruchem jednostajnym
-
-
-
-
+	//printf("Calculated:  %d\r\n",accel);
+	init_movement(motor, total_steps, accel, accel, MAX_VEL);
 
 }
-
 
 void reset_motor(motorInfo *motor,TIM_HandleTypeDef *timer,GPIO_TypeDef *GPIOX,uint16_t GPIO_Label)
 {
@@ -246,6 +322,7 @@ void reset_motor(motorInfo *motor,TIM_HandleTypeDef *timer,GPIO_TypeDef *GPIOX,u
 	motor->GPIO_Label=GPIO_Label;
 	test.movement_done=1;
 	motor->step_position=0;
+	motor->total_steps=0;
 
 	HAL_GPIO_WritePin(motor->GPIOX, motor->GPIO_Label, motor->dir>0);
 	HAL_TIM_OC_Stop(motor->timer,TIM_CHANNEL_1);
@@ -254,6 +331,120 @@ void reset_motor(motorInfo *motor,TIM_HandleTypeDef *timer,GPIO_TypeDef *GPIOX,u
 }
 
 
+
+double positive_root(double a, double b, double c)
+{
+	return (-b+sqrt(pow(b,2)-4*a*c))/(2*a);
+}
+double negative_root(double a, double b, double c)
+{
+	return (-b-sqrt(pow(b,2)-4*a*c))/(2*a);
+}
+
+
+long inverse_single_joint(double vx, double vy, double vz)
+{
+
+
+
+	vx = 0.6966;
+	vy = -0.6769;
+	vz = -0.2379;
+
+		double a=-vy*sqrt(2)/2.0-vz*sqrt(2)/2.0;
+		double b= vx*sqrt(2)/2.0;
+		double c= vy*sqrt(2)/2.0-vz*sqrt(2)/2.0;
+		double tmp1,tmp2;
+
+
+		printf("%f %f %f\r\nRoots: ",a,b,c);
+
+		tmp1 = positive_root(a, 2 * b, c);
+		tmp2 = negative_root(a, 2 * b, c);
+		printf("tmp1: %f tmp2: %f\r\n", tmp1, tmp2);
+
+
+		if(a==0 && b == 0)
+			tmp1=tmp2=0;
+
+		if(a==0&&b!=0)
+		{
+			tmp1=tmp2=-c/b;
+		}
+		else
+		if(a!=0){
+			tmp1 = 2*atan(positive_root(a, 2*b, c));
+			tmp2 = 2*atan(negative_root(a, 2*b, c));
+			printf("tmp1: %f tmp2:x %f\r\n",tmp1,tmp2);
+
+			if(tmp1>tmp2)
+				tmp1=tmp2;
+		}
+
+		tmp1= - tmp1;
+
+
+		printf("rad tmp: %f  %ld\r\n\n\n",tmp1,(long)(tmp1/ALPHA));
+
+		return (long)(tmp1/ALPHA);
+}
+
+
+void inverse_kinematics(long roll, long pitch, long yaw, long *pos_1, long *pos_2, long *pos_3)
+{
+
+
+	double vx,vy,vz;
+	double phi,theta,psi;
+	phi = roll*3.14159/180000;
+	theta = pitch*3.14159/180000;
+	psi = yaw*3.14159/180000;
+	//motor1
+	double tmp;
+	//printf("%f %f %f\r\n",phi,theta,psi);
+
+	vx=cos(phi)*cos(theta);
+	vy=sin(phi)*cos(theta);
+	vz=-sin(theta);
+
+/*
+	vx=-sin(psi)*sin(psi)-cos(phi)*cos(psi)*sin(theta);
+	vy=cos(psi)*sin(phi) - cos(phi)*sin(psi)*sin(theta);
+	vz=-cos(phi)*cos(theta);
+
+*/
+
+	(*pos_1)=inverse_single_joint(vx, vy, vz);
+	tmp = pow(vx,2)+pow(vy,2)+pow(vz,2);
+
+	printf("pos1: %ld  norm^2: %f\r\n",*pos_1,tmp);
+
+	//motor2
+	vx = cos(phi) * sin(theta)*sin(psi)-sin(phi)*cos(psi);
+	vy = sin(phi) * sin(theta)*sin(psi)+cos(phi)*cos(psi);
+	vz = cos(theta)*sin(psi);
+	(*pos_2)=inverse_single_joint(vx, vy, vz);
+	printf("pos2: %ld  norm^2: %f\r\n",*pos_2,tmp);
+
+
+	//motor3
+	vx = cos(phi) * sin(theta)*cos(psi)+sin(phi)*sin(psi);
+	vy = sin(phi) * sin(theta)*cos(psi)-cos(phi)*sin(psi);
+	vz = cos(theta)*cos(psi);
+	(*pos_3)=inverse_single_joint(vx, vy, vz);
+	printf("pos3: %ld  norm^2: %f\r\n",*pos_3,tmp);
+
+}
+
+
+void movement_done_display(motorInfo *motor)
+{
+
+	printf("Motor done in:%f s\r\n",
+					(__HAL_TIM_GET_COUNTER(&htim5) - motor->movement_start) / 1000000.0);
+			motor->movement_done=0;
+	printf("Acceleration used: %u, Current position: %d \r\n",motor->acceleration,motor->step_position);
+}
 
 
 
@@ -275,7 +466,7 @@ unsigned long calculate_auto_reload(motorInfo *motor)
 	case STOP:
 
 		motor->movement_done=1;
-		flag_htim2_done=1;
+		//flag_htim2_done=1;
 		HAL_TIM_OC_Stop(motor->timer,TIM_CHANNEL_1);
 		HAL_TIM_Base_Stop_IT(motor->timer);
 
@@ -386,11 +577,13 @@ int main(void)
 
 
 
-	  reset_motor(&test,&htim2,STEPPER_DIR_1_GPIO_Port, STEPPER_DIR_1_Pin);
+	  reset_motor(&motor_1,&htim2,STEPPER_DIR_1_GPIO_Port, STEPPER_DIR_1_Pin);
+	  reset_motor(&motor_2,&htim3,STEPPER_DIR_2_GPIO_Port, STEPPER_DIR_2_Pin);
+	  reset_motor(&motor_3,&htim4,STEPPER_DIR_3_GPIO_Port, STEPPER_DIR_3_Pin);
 
 
-	  HAL_TIM_Base_Start_IT(&htim3);
-	  HAL_TIM_Base_Start_IT(&htim4);
+	//  HAL_TIM_Base_Start_IT(&htim3);
+	 // HAL_TIM_Base_Start_IT(&htim4);
 	  HAL_TIM_Base_Start_IT(&htim5);
 
 
@@ -399,18 +592,21 @@ int main(void)
   HAL_UARTEx_ReceiveToIdle_DMA(&huart2, RxBuf, RxBuf_SIZE);
   __HAL_DMA_DISABLE_IT(&hdma_usart2_rx,DMA_IT_HT);
 
+flag_command_recieved=0;
 
-flag_htim2_done=flag_command_recieved=0;
 
-float tmp;
-  unsigned timer_val,accel,max_speed,steps,decel;
-  unsigned steps_1,steps_2,time;
+	unsigned long timer_val;
+  long roll, pitch, yaw;
+  long steps_1,steps_2,steps_3;
+  unsigned time;
+  printf("Start\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  /*
 	  if(flag_htim2_done)
 	  {
 		  timer_val = __HAL_TIM_GET_COUNTER(&htim5)-timer_val;
@@ -419,12 +615,28 @@ float tmp;
 		  printf("Time breakdown --- T1: %f   T2: %f   T3: %f\r\n", (double)test.T1/1000000, (double)test.T2/1000000, (double)test.T3/1000000);
 		  tmp = ((double)test.T1/1000000+(double)test.T2/1000000+(double)test.T3/1000000);
 		  printf("T_approx - T_exact : %fs , Error as percentege of actual time %f \n",test.time_to_complete-tmp,(test.time_to_complete*100.0/tmp-100.0));
+		  printf("Uncorrected error as percentrage: %f \n",(test.acc_time+test.dec_time)*100.0/tmp-100.0);
+
 		  tmp = ((double)test.T1/1000000);
 		  printf("acc time estimate: %fs ,Delta %fs, error as percentage: %f",test.acc_time,(test.acc_time-tmp), test.acc_time*100.0/tmp-100.0);
 		  printf("\r\n\r\n---------\r\n\r\n");
 		  flag_htim2_done=0;
 
-	  }
+	  }*/
+	if (motor_1.movement_done) {
+		printf("Motor 1 done\r\n");
+		movement_done_display(&motor_1);
+	}
+	if (motor_2.movement_done) {
+		printf("Motor 2 done\r\n");
+				movement_done_display(&motor_2);
+
+	}
+	if (motor_3.movement_done) {
+		printf("Motor 3 done\r\n");
+				movement_done_display(&motor_3);
+
+	}
 
 	  if(flag_command_recieved)
 	  {
@@ -434,12 +646,26 @@ float tmp;
 
 			printf("Recieved: %s \r\n", MainBuf);
 
-			sscanf(MainBuf, "%d %u %u %u", &steps, &accel, &decel, &max_speed);
+			sscanf(MainBuf, "%d %d %d %u", &steps_1,&steps_2,&steps_3,&time);
 			//accel, decel in 1m rad/s^2
 			//max_speed in 1m rad/s
-			init_movement(&test, steps, accel, decel, max_speed);
 
-			//htim5.Instance->CNT	=0;
+
+			//inverse_kinematics(roll, pitch, yaw, &steps_1, &steps_2, &steps_3);
+
+
+
+
+			init_movement_time(&motor_1, steps_1-motor_1.step_position, time);
+			init_movement_time(&motor_2, steps_2-motor_2.step_position, time);
+			init_movement_time(&motor_3, steps_3-motor_3.step_position, time);
+
+
+			htim5.Instance->CNT	=0;
+
+			begin_movement(&motor_1);
+			begin_movement(&motor_2);
+			begin_movement(&motor_3);
 			timer_val = __HAL_TIM_GET_COUNTER(&htim5);
 			flag_command_recieved = 0;
 
@@ -517,7 +743,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 400-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 400-1;
+  htim2.Init.Period = 65535;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_OC_Init(&htim2) != HAL_OK)
@@ -564,23 +790,23 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 8400-1;
+  htim3.Init.Prescaler = 400-1;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim3.Init.Period = 65535;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_OC_Init(&htim3) != HAL_OK)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_TIMING;
-  sConfigOC.Pulse = 0;
+  sConfigOC.OCMode = TIM_OCMODE_TOGGLE;
+  sConfigOC.Pulse = 1;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_OC_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
@@ -613,23 +839,23 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 1 */
   htim4.Instance = TIM4;
-  htim4.Init.Prescaler = 0;
+  htim4.Init.Prescaler = 400-1;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim4.Init.Period = 65535;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_OC_Init(&htim4) != HAL_OK)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_TIMING;
-  sConfigOC.Pulse = 0;
+  sConfigOC.OCMode = TIM_OCMODE_TOGGLE;
+  sConfigOC.Pulse = 1;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_OC_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
@@ -792,13 +1018,26 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-	if(htim == test.timer)
+	if(htim == motor_1.timer)
 	{
-		if(!test.movement_done)
-			TIM2->ARR=calculate_auto_reload(&test);
-
+		if(!motor_1.movement_done)
+			TIM2->ARR=calculate_auto_reload(&motor_1);
 
 	}
+	else
+	if(htim == motor_2.timer)
+		{
+			if(!motor_2.movement_done)
+				TIM3->ARR=calculate_auto_reload(&motor_2);
+
+		}
+	else
+	if(htim == motor_3.timer)
+		{
+			if(!motor_3.movement_done)
+				TIM4->ARR=calculate_auto_reload(&motor_3);
+
+		}
 }
 
 /* USER CODE END 4 */

@@ -50,6 +50,7 @@ typedef struct motorInfo
 
 
 	unsigned long T1,T2,T3;
+	unsigned long movement_start;
 	double acc_time;
 	double dec_time;
 
